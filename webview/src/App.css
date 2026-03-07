@@ -4,47 +4,11 @@
 
 .app {
   height: 100%;
-  display: flex;
-  flex-direction: column;
   background: var(--vscode-editor-background);
 }
 
-.toolbar {
-  height: 36px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--vscode-editorGroup-border, transparent);
-  background: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-editor-foreground) 12%);
-}
-
-.toolbar-button {
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--vscode-foreground);
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.toolbar-button:hover {
-  background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 18%, transparent);
-  border-color: color-mix(in srgb, var(--vscode-button-background, #0e639c) 40%, transparent);
-}
-
-.toolbar-button:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: 1px;
-}
-
 .app-editor {
-  flex: 1;
-  min-height: 0;
+  height: 100%;
   position: relative;
   overflow: hidden;
 }
@@ -53,28 +17,18 @@
   height: 100%;
 }
 
-.editor-host .milkdown,
-.editor-host .milkdown .editor {
-  height: 100%;
-}
-
 .editor-host .milkdown {
-  background: var(--vscode-editor-background);
-  color: var(--vscode-editor-foreground);
-}
-
-.editor-host .milkdown .editor,
-.editor-host .milkdown .editor:focus-within {
-  border: none !important;
-  box-shadow: none !important;
+  height: 100%;
 }
 
 .editor-host .milkdown .ProseMirror {
   min-height: 100%;
-  box-sizing: border-box;
-  padding: 14px 16px 48px;
-  outline: none;
-  cursor: text;
+}
+
+.editor-host .milkdown .milkdown-image-block > .image-wrapper {
+  margin-left: 0;
+  margin-right: auto;
+  justify-content: flex-start;
 }
 
 .editor-loading {

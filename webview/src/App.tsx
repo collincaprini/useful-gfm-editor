@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Editor, defaultValueCtx, rootCtx } from '@milkdown/core';
-import { gfm } from '@milkdown/preset-gfm';
-import { commonmark } from '@milkdown/preset-commonmark';
-import { listener, listenerCtx } from '@milkdown/plugin-listener';
-import { nord } from '@milkdown/theme-nord';
+import { Crepe, CrepeFeature } from '@milkdown/crepe';
 import { insert, replaceAll } from '@milkdown/utils';
-import '@milkdown/theme-nord/style.css';
+import '@milkdown/crepe/theme/common/style.css';
+import '@milkdown/crepe/theme/nord-dark.css';
 import './App.css';
 
 type ExtensionToWebviewMessage =
@@ -28,27 +25,23 @@ declare global {
   }
 }
 
-type ToolbarAction = {
-  id: string;
-  label: string;
-  snippet: string;
-  title: string;
+const CREPE_FEATURES: Partial<Record<CrepeFeature, boolean>> = {
+  [CrepeFeature.CodeMirror]: true,
+  [CrepeFeature.ListItem]: true,
+  [CrepeFeature.LinkTooltip]: true,
+  [CrepeFeature.Cursor]: true,
+  [CrepeFeature.ImageBlock]: true,
+  [CrepeFeature.BlockEdit]: true,
+  [CrepeFeature.Toolbar]: true,
+  [CrepeFeature.Placeholder]: true,
+  [CrepeFeature.Table]: true,
+  [CrepeFeature.Latex]: true,
 };
-
-const TOOLBAR_ACTIONS: ToolbarAction[] = [
-  { id: 'h1', label: 'H1', snippet: '\n# Heading\n', title: 'Insert heading' },
-  { id: 'bold', label: 'B', snippet: '**bold text**', title: 'Insert bold text' },
-  { id: 'italic', label: 'I', snippet: '*italic text*', title: 'Insert italic text' },
-  { id: 'link', label: 'Link', snippet: '[link text](https://example.com)', title: 'Insert link' },
-  { id: 'code', label: 'Code', snippet: '\n```\ncode\n```\n', title: 'Insert code block' },
-  { id: 'quote', label: 'Quote', snippet: '\n> quote\n', title: 'Insert block quote' },
-  { id: 'list', label: 'List', snippet: '\n- item 1\n- item 2\n', title: 'Insert list' },
-];
 
 export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
-  const editorRef = useRef<Editor | null>(null);
+  const crepeRef = useRef<Crepe | null>(null);
   const applyingExternalUpdateRef = useRef<boolean>(false);
   const latestEditorMarkdownRef = useRef<string>('');
   const pendingIncomingMarkdownRef = useRef<string | null>(null);
@@ -58,8 +51,8 @@ export default function App() {
   const editorHostRef = useRef<HTMLDivElement | null>(null);
 
   const applyIncomingMarkdown = useCallback((nextMarkdown: string) => {
-    const editor = editorRef.current;
-    if (!editor) {
+    const crepe = crepeRef.current;
+    if (!crepe) {
       pendingIncomingMarkdownRef.current = nextMarkdown;
       return;
     }
@@ -70,7 +63,7 @@ export default function App() {
 
     applyingExternalUpdateRef.current = true;
     try {
-      editor.action(replaceAll(nextMarkdown, true));
+      crepe.editor.action(replaceAll(nextMarkdown, true));
       latestEditorMarkdownRef.current = nextMarkdown;
       setError('');
     } catch (err: unknown) {
@@ -83,13 +76,13 @@ export default function App() {
   }, []);
 
   const insertMarkdownAtCursor = useCallback((snippet: string) => {
-    const editor = editorRef.current;
-    if (!editor) {
+    const crepe = crepeRef.current;
+    if (!crepe) {
       return;
     }
 
     try {
-      editor.action(insert(snippet));
+      crepe.editor.action(insert(snippet));
       setError('');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to insert markdown');
@@ -261,7 +254,7 @@ export default function App() {
     };
   }, [arrayBufferToBase64]);
 
-  useEffect(function mountMilkdownEditor() {
+  useEffect(function mountCrepeEditor() {
     const host = editorHostRef.current;
     if (!host) {
       return;
@@ -269,31 +262,31 @@ export default function App() {
 
     let disposed = false;
 
-    Editor.make()
-      .config(nord)
-      .use(listener)
-      .config((ctx) => {
-        ctx.set(rootCtx, host);
-        ctx.set(defaultValueCtx, '');
-        ctx.get(listenerCtx).markdownUpdated((_ctx, nextMarkdown) => {
-          if (applyingExternalUpdateRef.current) {
-            return;
-          }
+    const crepe = new Crepe({
+      root: host,
+      defaultValue: '',
+      features: CREPE_FEATURES,
+    });
 
-          latestEditorMarkdownRef.current = nextMarkdown;
-          vscodeRef.current?.postMessage({ type: 'updateMarkdown', markdown: nextMarkdown });
-        });
-      })
-      .use(commonmark)
-      .use(gfm)
-      .create()
-      .then((instance) => {
-        if (disposed) {
-          void instance.destroy();
+    crepe.on((api) => {
+      api.markdownUpdated((_ctx, nextMarkdown) => {
+        if (applyingExternalUpdateRef.current) {
           return;
         }
 
-        editorRef.current = instance;
+        latestEditorMarkdownRef.current = nextMarkdown;
+        vscodeRef.current?.postMessage({ type: 'updateMarkdown', markdown: nextMarkdown });
+      });
+    });
+
+    crepe.create()
+      .then(() => {
+        if (disposed) {
+          void crepe.destroy();
+          return;
+        }
+
+        crepeRef.current = crepe;
         const pendingMarkdown = pendingIncomingMarkdownRef.current;
         if (pendingMarkdown !== null) {
           pendingIncomingMarkdownRef.current = null;
@@ -312,29 +305,18 @@ export default function App() {
 
     return function cleanup() {
       disposed = true;
-      const editor = editorRef.current;
-      editorRef.current = null;
-      if (editor) {
-        void editor.destroy();
+      const currentCrepe = crepeRef.current;
+      crepeRef.current = null;
+      if (currentCrepe) {
+        void currentCrepe.destroy();
+      } else {
+        void crepe.destroy();
       }
     };
   }, [applyIncomingMarkdown]);
 
   return (
     <main className="app">
-      <header className="toolbar">
-        {TOOLBAR_ACTIONS.map((action) => (
-          <button
-            key={action.id}
-            type="button"
-            className="toolbar-button"
-            title={action.title}
-            onClick={() => insertMarkdownAtCursor(action.snippet)}
-          >
-            {action.label}
-          </button>
-        ))}
-      </header>
       <section className="app-editor">
         <div ref={editorHostRef} className="editor-host" />
         {loading ? <div className="editor-loading">Loading editor...</div> : null}
