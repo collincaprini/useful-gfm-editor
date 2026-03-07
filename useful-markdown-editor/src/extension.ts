@@ -43,9 +43,8 @@ class UsefulMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
     const webviewRoot = vscode.Uri.joinPath(
       this.context.extensionUri,
-      '..',
-      'webview',
-      'dist'
+      'dist',
+      'webview'
     );
 
     const documentDirUri = getDocumentDirWebviewUri(document, webviewPanel.webview);

@@ -1,10 +1,18 @@
 {
   "name": "useful-markdown-editor",
-  "displayName": "useful-markdown-editor",
-  "description": "To provide a better markdown editing experience in VS Code",
+  "displayName": "Useful Markdown Editor",
+  "description": "A rich markdown editor for VS Code powered by Milkdown Crepe.",
   "version": "0.0.1",
+  "publisher": "replace-with-publisher-id",
+  "license": "MIT",
+  "keywords": [
+    "markdown",
+    "gfm",
+    "editor",
+    "milkdown"
+  ],
   "engines": {
-    "vscode": "^1.107.0"
+    "vscode": "^1.109.0"
   },
   "categories": [
     "Other"
@@ -30,11 +38,17 @@
   "scripts": {
     "vscode:prepublish": "npm run package",
     "build": "npm run package",
+    "build:webview": "npm --prefix ../webview run build",
+    "prepare:webview": "node scripts/copy-webview-dist.mjs",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production && npm run prepare:webview",
+    "package:vsix": "npm run build:webview && npx @vscode/vsce package",
+    "publish:patch": "npm run build:webview && npx @vscode/vsce publish patch",
+    "publish:minor": "npm run build:webview && npx @vscode/vsce publish minor",
+    "publish:major": "npm run build:webview && npx @vscode/vsce publish major",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
@@ -43,6 +57,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
+    "@vscode/vsce": "^3.7.0",
     "@types/vscode": "^1.109.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",

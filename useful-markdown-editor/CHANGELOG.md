@@ -7,3 +7,6 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ## [Unreleased]
 
 - Initial release
+- Added Milkdown Crepe-based markdown editor experience
+- Added clipboard image paste that saves files to `assets/`
+- Added packaging/publishing pipeline for VS Code Marketplace
