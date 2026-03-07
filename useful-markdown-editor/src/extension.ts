@@ -1,140 +1,155 @@
 import * as vscode from 'vscode';
+import * as fs from 'node:fs';
 
-export function activate(context: vscode.ExtensionContext): void {
-	const provider = new MarkdownEditorProvider(context);
+type WebviewMessage =
+  | { type: 'ready' }
+  | { type: 'updateMarkdown'; markdown: string };
 
-	context.subscriptions.push(
-		vscode.window.registerCustomEditorProvider(
-			MarkdownEditorProvider.viewType,
-			provider,
-			{
-				webviewOptions: {
-					retainContextWhenHidden: true,
-				},
-			},
-		),
-	);
+export function activate(context: vscode.ExtensionContext) {
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(
+      'useful-markdown-editor.editor',
+      new UsefulMarkdownEditorProvider(context),
+      {
+        webviewOptions: {
+          retainContextWhenHidden: true,
+        },
+      }
+    )
+  );
 }
 
-export function deactivate(): void {}
+class UsefulMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
+  private readonly context: vscode.ExtensionContext;
 
-class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
-	public static readonly viewType = 'useful-markdown-editor.editor';
+  public constructor(context: vscode.ExtensionContext) {
+    this.context = context;
+  }
 
-	private readonly context: vscode.ExtensionContext;
+  public async resolveCustomTextEditor(
+    document: vscode.TextDocument,
+    webviewPanel: vscode.WebviewPanel
+  ): Promise<void> {
+    let suppressedDocumentVersion = -1;
 
-	public constructor(context: vscode.ExtensionContext) {
-		this.context = context;
-	}
+    const webviewRoot = vscode.Uri.joinPath(
+      this.context.extensionUri,
+      '..',
+      'webview',
+      'dist'
+    );
 
-	public async resolveCustomTextEditor(
-		document: vscode.TextDocument,
-		webviewPanel: vscode.WebviewPanel,
-		_token: vscode.CancellationToken,
-	): Promise<void> {
-		webviewPanel.webview.options = {
-			enableScripts: true,
-		};
+    webviewPanel.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [webviewRoot],
+    };
 
-		const testWebView = 
+    webviewPanel.webview.html = this.getWebviewHtml(webviewPanel.webview, webviewRoot);
 
-		webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
+    webviewPanel.webview.onDidReceiveMessage(
+      async (message: WebviewMessage) => {
+        if (message.type === 'ready') {
+          webviewPanel.webview.postMessage({
+            type: 'loadMarkdown',
+            markdown: document.getText(),
+          });
+          return;
+        }
 
-		const updateWebview = void webviewPanel.webview.postMessage({
-			type: 'setDocument',
-			text: document.getText(),
-			uri: document.uri.toString(),
-		});
+        if (message.type === 'updateMarkdown') {
+          const nextMarkdown = message.markdown;
+          const currentMarkdown = document.getText();
+          if (nextMarkdown === currentMarkdown) {
+            return;
+          }
 
-		await updateWebview;
+          const fullRange = new vscode.Range(
+            document.positionAt(0),
+            document.positionAt(currentMarkdown.length)
+          );
 
-		const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument((event) => {
-			if (event.document.uri.toString() !== document.uri.toString()) {
-				return;
-			}
+          const currentVersion = document.version;
+          const edit = new vscode.WorkspaceEdit();
+          edit.replace(document.uri, fullRange, nextMarkdown);
+          const applied = await vscode.workspace.applyEdit(edit);
+          if (applied) {
+            suppressedDocumentVersion = currentVersion + 1;
+          }
+        }
+      },
+      undefined,
+      this.context.subscriptions
+    );
 
-			void webviewPanel.webview.postMessage({
-				type: 'setDocument',
-				text: document.getText(),
-				uri: document.uri.toString(),
-			});
-		});
+    const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(function onDidChange(event) {
+      if (event.document.uri.toString() !== document.uri.toString()) {
+        return;
+      }
 
-		webviewPanel.onDidDispose(() => {
-			changeDocumentSubscription.dispose();
-		});
+      if (event.document.version === suppressedDocumentVersion) {
+        suppressedDocumentVersion = -1;
+        return;
+      }
 
-		webviewPanel.webview.onDidReceiveMessage(async (message) => {
-			switch (message.type) {
-				case 'ready': {
-					await webviewPanel.webview.postMessage({
-						type: 'setDocument',
-						text: document.getText(),
-						uri: document.uri.toString(),
-					});
-					return;
-				}
+      webviewPanel.webview.postMessage({
+        type: 'loadMarkdown',
+        markdown: document.getText(),
+      });
+    });
 
-				case 'updateDocument': {
-					await this.updateTextDocument(document, message.text);
-					return;
-				}
-			}
-		});
-	}
+    webviewPanel.onDidDispose(() => {
+      changeDocumentSubscription.dispose();
+    });
+  }
 
-	private async updateTextDocument(
-		document: vscode.TextDocument,
-		newText: string,
-	): Promise<void> {
-		const edit = new vscode.WorkspaceEdit();
+  private getWebviewHtml(webview: vscode.Webview, distRoot: vscode.Uri): string {
+    const indexHtmlUri = vscode.Uri.joinPath(distRoot, 'index.html');
+    let html = fs.readFileSync(indexHtmlUri.fsPath, 'utf8');
 
-		edit.replace(
-			document.uri,
-			new vscode.Range(
-				document.positionAt(0),
-				document.positionAt(document.getText().length),
-			),
-			newText,
-		);
+    const nonce = getNonce();
 
-		await vscode.workspace.applyEdit(edit);
-	}
+    html = html.replace(
+      /<link rel="stylesheet" crossorigin href="(.+?)">/g,
+      (_, assetPath: string) => {
+        const assetUri = webview.asWebviewUri(vscode.Uri.joinPath(distRoot, assetPath));
+        return `<link rel="stylesheet" href="${assetUri.toString()}">`;
+      }
+    );
 
-	private getHtmlForWebview(webview: vscode.Webview): string {
-		const nonce = getNonce();
+    html = html.replace(
+      /<script type="module" crossorigin src="(.+?)"><\/script>/g,
+      (_, assetPath: string) => {
+        const assetUri = webview.asWebviewUri(vscode.Uri.joinPath(distRoot, assetPath));
+        return `<script nonce="${nonce}" type="module" src="${assetUri.toString()}"></script>`;
+      }
+    );
 
-		return /* html */ `<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8" />
-	<meta
-		http-equiv="Content-Security-Policy"
-		content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"
-	/>
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Useful Markdown Editor</title>
-</head>
-<body>
-	<div id="root" style="padding: 16px; font-family: sans-serif;"></div>
+    html = html.replace(
+      '</head>',
+      `
+      <meta
+        http-equiv="Content-Security-Policy"
+        content="
+          default-src 'none';
+          img-src ${webview.cspSource} https: data:;
+          style-src ${webview.cspSource} 'unsafe-inline';
+          font-src ${webview.cspSource};
+          script-src 'nonce-${nonce}';
+        "
+      />
+      </head>
+      `
+    );
 
-5
-
-		vscode.postMessage({ type: 'ready' });
-	</script>
-</body>
-</html>`;
-	}
+    return html;
+  }
 }
 
 function getNonce(): string {
-	const chars =
-		'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-
-	let value = '';
-	for (let index = 0; index < 32; index += 1) {
-		value += chars.charAt(Math.floor(Math.random() * chars.length));
-	}
-
-	return value;
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let value = '';
+  for (let i = 0; i < 32; i += 1) {
+    value += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return value;
 }

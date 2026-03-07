@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "scripts": {
+    "build:webview": "npm --prefix webview run build",
+    "build:extension": "npm --prefix useful-markdown-editor run build",
+    "build": "npm run build:webview && npm run build:extension"
+  }
+}
