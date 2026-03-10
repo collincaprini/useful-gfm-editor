@@ -49,6 +49,37 @@ export default function App() {
   const documentDirUriRef = useRef<string | null>(null);
   const vscodeRef = useRef<VsCodeApi | null>(null);
   const editorHostRef = useRef<HTMLDivElement | null>(null);
+  const syncTimerRef = useRef<number | null>(null);
+  const queuedSyncMarkdownRef = useRef<string | null>(null);
+  const lastSyncedMarkdownRef = useRef<string>('');
+
+  const flushMarkdownSync = useCallback(() => {
+    const markdown = queuedSyncMarkdownRef.current;
+    if (markdown === null) {
+      return;
+    }
+
+    queuedSyncMarkdownRef.current = null;
+    if (markdown === lastSyncedMarkdownRef.current) {
+      return;
+    }
+
+    lastSyncedMarkdownRef.current = markdown;
+    vscodeRef.current?.postMessage({ type: 'updateMarkdown', markdown });
+  }, []);
+
+  const scheduleMarkdownSync = useCallback((markdown: string) => {
+    queuedSyncMarkdownRef.current = markdown;
+
+    if (syncTimerRef.current !== null) {
+      window.clearTimeout(syncTimerRef.current);
+    }
+
+    syncTimerRef.current = window.setTimeout(() => {
+      syncTimerRef.current = null;
+      flushMarkdownSync();
+    }, 250);
+  }, [flushMarkdownSync]);
 
   const applyIncomingMarkdown = useCallback((nextMarkdown: string) => {
     const crepe = crepeRef.current;
@@ -65,6 +96,7 @@ export default function App() {
     try {
       crepe.editor.action(replaceAll(nextMarkdown, true));
       latestEditorMarkdownRef.current = nextMarkdown;
+      lastSyncedMarkdownRef.current = nextMarkdown;
       setError('');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to apply document update');
@@ -176,18 +208,37 @@ export default function App() {
       img.src = `${normalizedBase}/${normalizedRaw}`;
     };
 
-    const rewriteAll = () => {
-      host.querySelectorAll('img').forEach((node) => {
-        if (node instanceof HTMLImageElement) {
-          rewriteImageSource(node);
-        }
-      });
+    const rewriteInNode = (node: Node) => {
+      if (node instanceof HTMLImageElement) {
+        rewriteImageSource(node);
+        return;
+      }
+
+      if (node instanceof HTMLElement) {
+        node.querySelectorAll('img').forEach((img) => {
+          if (img instanceof HTMLImageElement) {
+            rewriteImageSource(img);
+          }
+        });
+      }
     };
 
-    rewriteAll();
+    rewriteInNode(host);
 
-    const observer = new MutationObserver(() => {
-      rewriteAll();
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes') {
+          const target = mutation.target;
+          if (target instanceof HTMLImageElement) {
+            rewriteImageSource(target);
+          }
+          return;
+        }
+
+        mutation.addedNodes.forEach((node) => {
+          rewriteInNode(node);
+        });
+      });
     });
 
     observer.observe(host, {
@@ -275,7 +326,7 @@ export default function App() {
         }
 
         latestEditorMarkdownRef.current = nextMarkdown;
-        vscodeRef.current?.postMessage({ type: 'updateMarkdown', markdown: nextMarkdown });
+        scheduleMarkdownSync(nextMarkdown);
       });
     });
 
@@ -313,7 +364,36 @@ export default function App() {
         void crepe.destroy();
       }
     };
-  }, [applyIncomingMarkdown]);
+  }, [applyIncomingMarkdown, scheduleMarkdownSync]);
+
+  useEffect(() => {
+    const flush = () => {
+      if (syncTimerRef.current !== null) {
+        window.clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+      flushMarkdownSync();
+    };
+
+    const onBlur = () => {
+      flush();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flush();
+      }
+    };
+
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      flush();
+    };
+  }, [flushMarkdownSync]);
 
   return (
     <main className="app">

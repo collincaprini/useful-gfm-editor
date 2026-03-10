@@ -2,7 +2,7 @@
   "name": "useful-markdown-editor",
   "displayName": "Useful Markdown Editor",
   "description": "A rich markdown editor for VS Code powered by Milkdown Crepe.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "TwoDaimonsSoftware",
   "license": "MIT",
   "keywords": [

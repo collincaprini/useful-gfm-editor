@@ -39,7 +39,8 @@ class UsefulMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
   ): Promise<void> {
     const suppressedDocumentVersions = new Set<number>();
     let pendingEchoMarkdown: string | null = null;
-    let editQueue: Promise<void> = Promise.resolve();
+    let applyingWebviewUpdate = false;
+    let queuedWebviewMarkdown: string | null = null;
 
     const webviewRoot = vscode.Uri.joinPath(
       this.context.extensionUri,
@@ -60,6 +61,43 @@ class UsefulMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
     webviewPanel.webview.html = this.getWebviewHtml(webviewPanel.webview, webviewRoot);
 
+    const applyNextWebviewUpdate = async () => {
+      if (applyingWebviewUpdate) {
+        return;
+      }
+
+      applyingWebviewUpdate = true;
+      try {
+        while (queuedWebviewMarkdown !== null) {
+          const nextMarkdown = queuedWebviewMarkdown;
+          queuedWebviewMarkdown = null;
+
+          const normalizedNextMarkdown = normalizeNewlines(nextMarkdown);
+          const currentMarkdown = document.getText();
+          const normalizedCurrentMarkdown = normalizeNewlines(currentMarkdown);
+          if (normalizedNextMarkdown === normalizedCurrentMarkdown) {
+            continue;
+          }
+
+          const fullRange = new vscode.Range(
+            document.positionAt(0),
+            document.positionAt(currentMarkdown.length)
+          );
+
+          const expectedVersion = document.version + 1;
+          const edit = new vscode.WorkspaceEdit();
+          edit.replace(document.uri, fullRange, nextMarkdown);
+          const applied = await vscode.workspace.applyEdit(edit);
+          if (applied) {
+            suppressedDocumentVersions.add(expectedVersion);
+            pendingEchoMarkdown = normalizedNextMarkdown;
+          }
+        }
+      } finally {
+        applyingWebviewUpdate = false;
+      }
+    };
+
     webviewPanel.webview.onDidReceiveMessage(
       async (message: WebviewMessage) => {
         if (message.type === 'ready') {
@@ -73,32 +111,12 @@ class UsefulMarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         }
 
         if (message.type === 'updateMarkdown') {
-          editQueue = editQueue.then(async () => {
-            const nextMarkdown = message.markdown;
-            const normalizedNextMarkdown = normalizeNewlines(nextMarkdown);
-            const currentMarkdown = document.getText();
-            const normalizedCurrentMarkdown = normalizeNewlines(currentMarkdown);
-            if (normalizedNextMarkdown === normalizedCurrentMarkdown) {
-              return;
-            }
-
-            const fullRange = new vscode.Range(
-              document.positionAt(0),
-              document.positionAt(currentMarkdown.length)
-            );
-
-            const expectedVersion = document.version + 1;
-            const edit = new vscode.WorkspaceEdit();
-            edit.replace(document.uri, fullRange, nextMarkdown);
-            const applied = await vscode.workspace.applyEdit(edit);
-            if (applied) {
-              suppressedDocumentVersions.add(expectedVersion);
-              pendingEchoMarkdown = normalizedNextMarkdown;
-            }
-          }).catch((err: unknown) => {
+          queuedWebviewMarkdown = message.markdown;
+          try {
+            await applyNextWebviewUpdate();
+          } catch (err: unknown) {
             console.error('Failed to apply webview markdown update:', err);
-          });
-          await editQueue;
+          }
           return;
         }
 
